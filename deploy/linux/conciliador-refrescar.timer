@@ -1,0 +1,21 @@
+# Dispara conciliador-refrescar.service todos los días a las 03:00.
+# Alternativa moderna a cron; se administra con systemctl y deja logs en journald.
+#
+# Instalar:
+#   sudo cp deploy/linux/conciliador-refrescar.{service,timer} /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now conciliador-refrescar.timer
+#   systemctl list-timers conciliador-refrescar.timer
+#
+# Equivalente en cron (si prefieres cron a un timer de systemd):
+#   0 3 * * *  conciliador  cd /opt/conciliador/backend && .venv/bin/python refrescar_propuestas.py
+
+[Unit]
+Description=Dispara la pre-carga nocturna de propuestas SUNAT
+
+[Timer]
+OnCalendar=*-*-* 03:00:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target

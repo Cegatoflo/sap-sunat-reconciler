@@ -1,0 +1,35 @@
+# Servicio systemd del backend (FastAPI/uvicorn).
+# Equivale a lo que en Windows hace NSSM: arranca solo, se reinicia si cae, sin consola.
+#
+# Instalar (asumiendo el proyecto en /opt/conciliador y un usuario de servicio 'conciliador'):
+#   sudo cp deploy/linux/conciliador-backend.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now conciliador-backend
+#   systemctl status conciliador-backend
+#
+# La app carga el .env y el directorio data/ por ruta ABSOLUTA (relativa al código),
+# así que no hace falta EnvironmentFile: basta con que el .env esté en /opt/conciliador/.env
+
+[Unit]
+Description=Conciliador SAP-SUNAT - API (FastAPI/uvicorn)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=conciliador
+Group=conciliador
+WorkingDirectory=/opt/conciliador/backend
+# Escucha solo en localhost: el TLS y la exposición pública los pone nginx delante (ver nginx.conf.example)
+ExecStart=/opt/conciliador/backend/.venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 18450
+Restart=on-failure
+RestartSec=5
+
+# Endurecimiento básico
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=true
+
+[Install]
+WantedBy=multi-user.target

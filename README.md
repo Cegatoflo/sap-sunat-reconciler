@@ -135,6 +135,32 @@ de datos): dos analistas no pueden tomar la misma factura ni haciendo clic en el
 
 ---
 
+## Requisitos
+
+### Software
+
+| | Versión | Para qué |
+|---|---|---|
+| **Python** | 3.10+ | Backend (ingesta, API, motor de conciliación) |
+| **Node.js** | 18+ | Solo para *compilar* el frontend (`npm run build`); no se necesita en runtime |
+| **SO** | Windows 10/11 o Server · Linux (Ubuntu 20.04+, CentOS/RHEL 8+) | Ver despliegue |
+| **SAP Business One** | Service Layer accesible por red (LAN) | Fuente de datos e identidad |
+| **SUNAT** | App registrada en SIRE (client_id/secret + usuario SOL) | Fuente de la propuesta RCE |
+
+Sin dependencias pesadas de datos: **no** requiere Docker, message broker, ni motor de base de
+datos externo — el estado vive en un archivo SQLite (WAL). Elección **proporcional al volumen**
+(miles de comprobantes/mes, no millones).
+
+### Hardware (orientativo)
+
+| Escenario | vCPU | RAM | Disco |
+|---|---|---|---|
+| **Mínimo** (1 empresa, pocos usuarios) | 1 | 1 GB | 2 GB |
+| **Recomendado** (varias empresas, ~15-20 analistas) | 2 | 2-4 GB | 5 GB + crecimiento de la caché de propuestas |
+
+El grueso del costo es **I/O de red** contra SAP y SUNAT, no CPU: por eso el diseño prioriza
+caché, reuso de sesiones y un job batch nocturno antes que fuerza bruta de cómputo.
+
 ## Cómo correrlo
 
 ### Desarrollo (dos terminales)
@@ -182,6 +208,14 @@ cd ..\deploy
 Antes de exponerlo a otros PCs: `APP_ENV=production`, instalar el CA interno de SAP y poner
 `SAP_VERIFY_SSL=true`, y **HTTPS** vía reverse proxy (las claves de SAP no deben viajar en claro).
 Backup diario de `data/conciliador.db`.
+
+### Producción (Linux — CentOS / Ubuntu)
+
+El código es cross-platform; en Linux el arranque nativo es **systemd + timer + nginx** en vez
+de NSSM + Task Scheduler. Los manifiestos listos para adaptar están en
+[`deploy/linux/`](deploy/linux/) (unidad `systemd` del backend, `service`+`timer` del job
+nocturno, y `nginx.conf.example` para el TLS) — con guía paso a paso en su
+[README](deploy/linux/README.md).
 
 ## Contratos de API no documentados (aprendidos a la mala)
 

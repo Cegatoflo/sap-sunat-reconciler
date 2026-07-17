@@ -1,0 +1,15 @@
+# Job batch (oneshot) que precalienta la caché de propuestas RCE de SUNAT.
+# Lo dispara el timer de al lado (conciliador-refrescar.timer). Equivale a la tarea
+# programada de Windows (deploy/instalar_tarea_refrescar.ps1).
+
+[Unit]
+Description=Conciliador SAP-SUNAT - pre-carga nocturna de propuestas SUNAT
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=conciliador
+Group=conciliador
+WorkingDirectory=/opt/conciliador/backend
+ExecStart=/opt/conciliador/backend/.venv/bin/python refrescar_propuestas.py
