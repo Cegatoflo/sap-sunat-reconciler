@@ -1,0 +1,31 @@
+# Reverse proxy con TLS delante del backend.
+# El backend escucha solo en 127.0.0.1:18450; nginx termina el HTTPS y lo publica.
+# Sin esto, las claves de SAP de los usuarios viajarían en claro por la red.
+#
+#   sudo cp deploy/linux/nginx.conf.example /etc/nginx/conf.d/conciliador.conf
+#   # edita server_name y las rutas de los certificados
+#   sudo nginx -t && sudo systemctl reload nginx
+
+server {
+    listen 80;
+    server_name conciliador.tuempresa.local;
+    # Redirige todo a HTTPS
+    return 301 https://$host$request_uri;
+}
+
+server {
+    listen 443 ssl;
+    server_name conciliador.tuempresa.local;
+
+    ssl_certificate     /etc/ssl/certs/conciliador.crt;
+    ssl_certificate_key /etc/ssl/private/conciliador.key;
+
+    # El frontend compilado y la API los sirve el mismo backend (un solo upstream)
+    location / {
+        proxy_pass http://127.0.0.1:18450;
+        proxy_set_header Host              $host;
+        proxy_set_header X-Real-IP         $remote_addr;
+        proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+}
