@@ -2,7 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { asignar, obtenerCruce } from "../api";
-import { EN_AMBOS, MESES, SOLO_SAP, SOLO_SUNAT, TIPO_CP, etiquetaPeriodo, textoAntiguedad } from "../types";
+import { EN_AMBOS, MESES, SOLO_SAP, SOLO_SUNAT, TIPO_CP, diferenciaImporte, etiquetaPeriodo, textoAntiguedad } from "../types";
 import type { Estado, Fila, Usuario } from "../types";
 
 const nf = new Intl.NumberFormat("es-PE", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -18,8 +18,20 @@ const TEXTO_ESTADO: Record<Estado, string> = {
   2: "Solo SUNAT",
 };
 
-type CampoOrden = "estado" | "fecha" | "ruc" | "proveedor" | "tipo" | "comprobante" | "moneda" | "total" | "docnum_sap";
+type CampoOrden =
+  | "estado" | "fecha" | "fecha_registro" | "ruc" | "proveedor" | "tipo"
+  | "comprobante" | "moneda" | "total" | "diferencia" | "docnum_sap";
 type Orden = { campo: CampoOrden; dir: 1 | -1 };
+
+/** Valor por el que se ordena una columna (la mayoría son campos de la fila;
+ *  "diferencia" es calculado). */
+function valorOrden(f: Fila, campo: CampoOrden): string | number | null {
+  if (campo === "diferencia") {
+    const d = diferenciaImporte(f);
+    return d == null ? null : Math.abs(d);   // ordena por magnitud de la diferencia
+  }
+  return f[campo];
+}
 
 export default function Cruce({ yo }: { yo: Usuario }) {
   const qc = useQueryClient();
@@ -30,6 +42,7 @@ export default function Cruce({ yo }: { yo: Usuario }) {
   const [verEstado, setVerEstado] = useState<Record<Estado, boolean>>({ 0: true, 1: true, 2: true });
   const [mesFiltro, setMesFiltro] = useState<string | null>(null);   // periodo "yyyymm" o null = Todos
   const [moneda, setMoneda] = useState("");
+  const [soloConDif, setSoloConDif] = useState(false);   // solo comprobantes con diferencia de importe
   const [busca, setBusca] = useState("");
   const [sel, setSel] = useState<Set<string>>(new Set());
   const [pagina, setPagina] = useState(0);
@@ -116,6 +129,12 @@ export default function Cruce({ yo }: { yo: Usuario }) {
     setMesFiltro(null);
   }, [rango.desde, rango.hasta]);
 
+  // un comprobante "tiene diferencia" si está en ambos y sus totales no cuadran (a la céntima)
+  const conDif = (f: Fila) => {
+    const d = diferenciaImporte(f);
+    return d != null && d !== 0;
+  };
+
   const filtradas = useMemo(() => {
     const filas = q.data?.filas ?? [];
     const t = busca.trim().toLowerCase();
@@ -123,12 +142,13 @@ export default function Cruce({ yo }: { yo: Usuario }) {
       if (mesFiltro && f.periodo !== mesFiltro) return false;
       if (!verEstado[f.estado]) return false;
       if (moneda && f.moneda !== moneda) return false;
+      if (soloConDif && !conDif(f)) return false;
       if (t && !`${f.ruc} ${f.proveedor} ${f.comprobante}`.toLowerCase().includes(t)) return false;
       return true;
     });
-  }, [q.data, mesFiltro, verEstado, moneda, busca]);
+  }, [q.data, mesFiltro, verEstado, moneda, soloConDif, busca]);
 
-  // base para los KPIs: todo lo que aplica mes/moneda/búsqueda, SIN el filtro de estado
+  // base para los KPIs: todo lo que aplica mes/moneda/diferencia/búsqueda, SIN el filtro de estado
   // (así el desglose por estado sigue sumando el 100% del total mostrado)
   const base = useMemo(() => {
     const filas = q.data?.filas ?? [];
@@ -136,10 +156,11 @@ export default function Cruce({ yo }: { yo: Usuario }) {
     return filas.filter((f) => {
       if (mesFiltro && f.periodo !== mesFiltro) return false;
       if (moneda && f.moneda !== moneda) return false;
+      if (soloConDif && !conDif(f)) return false;
       if (t && !`${f.ruc} ${f.proveedor} ${f.comprobante}`.toLowerCase().includes(t)) return false;
       return true;
     });
-  }, [q.data, mesFiltro, moneda, busca]);
+  }, [q.data, mesFiltro, moneda, soloConDif, busca]);
 
   const conteos = useMemo(() => {
     const c = { 0: 0, 1: 0, 2: 0 } as Record<Estado, number>;
@@ -151,8 +172,8 @@ export default function Cruce({ yo }: { yo: Usuario }) {
     if (!orden) return filtradas;
     const { campo, dir } = orden;
     return [...filtradas].sort((a, b) => {
-      const va = a[campo];
-      const vb = b[campo];
+      const va = valorOrden(a, campo);
+      const vb = valorOrden(b, campo);
       if (va == null && vb == null) return 0;
       if (va == null) return 1;    // sin dato siempre al final, sin importar la direccion
       if (vb == null) return -1;
@@ -317,6 +338,16 @@ export default function Cruce({ yo }: { yo: Usuario }) {
               <option>USD</option>
             </select>
           </div>
+          <div className="fgroup">
+            <span className="flab">Importe</span>
+            <button
+              className={`chip ${soloConDif ? "on sun" : ""}`}
+              title="Comprobantes que están en ambos lados pero cuyo total de SAP y SUNAT no coincide"
+              onClick={() => { setSoloConDif((v) => !v); setPagina(0); }}
+            >
+              ⚠ Con diferencia
+            </button>
+          </div>
         </div>
 
         {sel.size > 0 && (
@@ -351,13 +382,15 @@ export default function Cruce({ yo }: { yo: Usuario }) {
                     />
                   </th>
                   <ThOrden campo="estado" orden={orden} alReordenar={alReordenar}>Estado</ThOrden>
-                  <ThOrden campo="fecha" orden={orden} alReordenar={alReordenar}>Fecha</ThOrden>
+                  <ThOrden campo="fecha" orden={orden} alReordenar={alReordenar} titulo="Fecha de emisión del comprobante">F. Emisión</ThOrden>
+                  <ThOrden campo="fecha_registro" orden={orden} alReordenar={alReordenar} titulo="Fecha de contabilización en SAP: define en qué periodo del RCE cae">F. Registro</ThOrden>
                   <ThOrden campo="ruc" orden={orden} alReordenar={alReordenar}>RUC</ThOrden>
                   <ThOrden campo="proveedor" orden={orden} alReordenar={alReordenar}>Proveedor</ThOrden>
                   <ThOrden campo="tipo" orden={orden} alReordenar={alReordenar}>Tipo</ThOrden>
                   <ThOrden campo="comprobante" orden={orden} alReordenar={alReordenar}>Comprobante</ThOrden>
                   <ThOrden campo="moneda" orden={orden} alReordenar={alReordenar}>Mon.</ThOrden>
                   <ThOrden campo="total" orden={orden} alReordenar={alReordenar} right>Total</ThOrden>
+                  <ThOrden campo="diferencia" orden={orden} alReordenar={alReordenar} right titulo="Diferencia SUNAT − SAP (solo aplica a los que están en ambos)">Dif.</ThOrden>
                   <ThOrden campo="docnum_sap" orden={orden} alReordenar={alReordenar} right>Doc. SAP</ThOrden>
                 </tr>
               </thead>
@@ -389,12 +422,23 @@ export default function Cruce({ yo }: { yo: Usuario }) {
                         ))}
                       </td>
                       <td>{f.fecha}</td>
+                      <td className={f.fecha_registro && f.fecha_registro.slice(0, 7) !== f.fecha.slice(0, 7) ? "cruzado" : ""}
+                          title={f.fecha_registro && f.fecha_registro.slice(0, 7) !== f.fecha.slice(0, 7)
+                            ? "Emitido en otro mes y registrado en este periodo" : undefined}>
+                        {f.fecha_registro ?? "—"}
+                      </td>
                       <td className="ruc">{f.ruc}</td>
                       <td className="prov">{f.proveedor}</td>
                       <td><span className="tag">{TIPO_CP[f.tipo] ?? f.tipo}</span></td>
                       <td className="cmp">{f.comprobante}</td>
                       <td>{f.moneda}</td>
                       <td className="num">{nf.format(f.total)}</td>
+                      <td className="num">{(() => {
+                        const d = diferenciaImporte(f);
+                        if (d == null) return <span className="dim">—</span>;
+                        if (d === 0) return <span className="ok-dif">✓</span>;
+                        return <span className="dif" title={`SUNAT ${nf.format(f.total_sunat!)} − SAP ${nf.format(f.total_sap!)}`}>{d > 0 ? "+" : ""}{nf.format(d)}</span>;
+                      })()}</td>
                       <td className="num">{f.docnum_sap ?? "—"}</td>
                     </tr>
                   );
@@ -445,12 +489,13 @@ export default function Cruce({ yo }: { yo: Usuario }) {
 }
 
 function ThOrden({
-  campo, orden, alReordenar, right, children,
+  campo, orden, alReordenar, right, titulo, children,
 }: {
   campo: CampoOrden;
   orden: Orden | null;
   alReordenar: (campo: CampoOrden) => void;
   right?: boolean;
+  titulo?: string;
   children: ReactNode;
 }) {
   const activo = orden?.campo === campo;
@@ -458,6 +503,7 @@ function ThOrden({
     <th
       className={`sortable ${activo ? "active" : ""}`}
       style={right ? { textAlign: "right" } : undefined}
+      title={titulo}
       onClick={() => alReordenar(campo)}
       aria-sort={activo ? (orden!.dir === 1 ? "ascending" : "descending") : undefined}
     >

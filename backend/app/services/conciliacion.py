@@ -90,7 +90,7 @@ class Fila:
     clave: str
     periodo: str
     estado: int          # 0 en ambos | 1 solo SAP | 2 solo SUNAT
-    fecha: str
+    fecha: str           # fecha de EMISIÓN del comprobante
     ruc: str
     proveedor: str
     tipo: str
@@ -98,6 +98,9 @@ class Fila:
     moneda: str
     total: float
     docnum_sap: int | None = None
+    fecha_registro: str | None = None    # fecha de CONTABILIZACIÓN en SAP (por qué cae en este periodo)
+    total_sap: float | None = None       # total según SAP (None si solo está en SUNAT)
+    total_sunat: float | None = None     # total según SUNAT (None si solo está en SAP)
 
 
 def cargar_sunat(csv_path: Path) -> dict[str, dict]:
@@ -146,7 +149,8 @@ def cargar_sap(sap: SapSession, periodo: str, ruc_por_cardcode: dict[str, str]) 
             "proveedor": d.get("CardName") or "",
             "tipo": tipo,
             "comprobante": ref,
-            "fecha": (d.get("TaxDate") or "")[:10],
+            "fecha": (d.get("TaxDate") or "")[:10],          # emisión (lo que se muestra)
+            "fecha_registro": (d.get("DocDate") or "")[:10], # contabilización (define el periodo)
             "moneda": d.get("DocCurrency") or "",
             "total": _num(d.get("DocTotal")),
             "docnum": d.get("DocNum"),
@@ -164,13 +168,18 @@ def cruzar_periodo(sap: SapSession, sunat: SunatClient, periodo: str,
     filas: list[Fila] = []
     for k in lado_sunat.keys() | lado_sap.keys():
         estado = EN_AMBOS if k in ambos else (SOLO_SAP if k in lado_sap else SOLO_SUNAT)
-        base = lado_sunat.get(k) or lado_sap[k]      # SUNAT manda cuando existe en ambos
+        sap_row = lado_sap.get(k)
+        sun_row = lado_sunat.get(k)
+        base = sun_row or sap_row                    # SUNAT manda cuando existe en ambos
         filas.append(Fila(
             clave=k, periodo=periodo, estado=estado,
             fecha=base["fecha"], ruc=base["ruc"], proveedor=base["proveedor"],
             tipo=base["tipo"], comprobante=base["comprobante"],
             moneda=base["moneda"], total=base["total"],
-            docnum_sap=lado_sap.get(k, {}).get("docnum"),
+            docnum_sap=(sap_row or {}).get("docnum"),
+            fecha_registro=(sap_row or {}).get("fecha_registro"),
+            total_sap=(sap_row or {}).get("total"),
+            total_sunat=(sun_row or {}).get("total"),
         ))
     filas.sort(key=lambda f: (f.estado, f.proveedor))
     return filas

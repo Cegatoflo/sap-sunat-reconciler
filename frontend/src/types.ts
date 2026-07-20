@@ -22,7 +22,7 @@ export interface Fila {
   clave: string;
   periodo: string;
   estado: Estado;
-  fecha: string;
+  fecha: string;            // fecha de EMISIÓN del comprobante
   ruc: string;
   proveedor: string;
   tipo: string;
@@ -30,6 +30,16 @@ export interface Fila {
   moneda: string;
   total: number;
   docnum_sap: number | null;
+  fecha_registro: string | null;   // fecha de CONTABILIZACIÓN en SAP (define el periodo)
+  total_sap: number | null;
+  total_sunat: number | null;
+}
+
+/** Diferencia de importe SUNAT − SAP para un comprobante que está en ambos lados.
+ *  null si no aplica (no está en ambos, o falta algún total). */
+export function diferenciaImporte(f: Fila): number | null {
+  if (f.estado !== EN_AMBOS || f.total_sap == null || f.total_sunat == null) return null;
+  return Math.round((f.total_sunat - f.total_sap) * 100) / 100;
 }
 
 export interface Asignado {
