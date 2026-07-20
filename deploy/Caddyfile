@@ -1,0 +1,4 @@
+https://tu-servidor.local:18450 {
+	tls internal
+	reverse_proxy 127.0.0.1:18450
+}

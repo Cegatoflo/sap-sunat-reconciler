@@ -3,6 +3,11 @@
 *.env
 !.env.example
 
+# Certificados extraídos en despliegue (específicos de cada máquina/servidor SAP)
+*.pem
+*.crt
+*.key
+
 # Base de datos y datos descargados
 *.db
 *.db-wal
@@ -34,3 +39,6 @@ logs/
 Thumbs.db
 .idea/
 .vscode/
+
+# Notas personales / prompts de uso interno — no van al repo publico
+deploy/PROMPT_*.md
