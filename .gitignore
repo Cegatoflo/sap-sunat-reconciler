@@ -42,3 +42,6 @@ Thumbs.db
 
 # Notas personales / prompts de uso interno — no van al repo publico
 deploy/PROMPT_*.md
+
+# Config real de Caddy en esta maquina (el Caddyfile del repo es solo plantilla)
+deploy/Caddyfile.local
