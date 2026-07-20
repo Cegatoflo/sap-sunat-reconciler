@@ -17,7 +17,7 @@ class FilaOut(BaseModel):
     clave: str
     periodo: str
     estado: int          # 0 en ambos · 1 solo SAP · 2 solo SUNAT
-    fecha: str
+    fecha: str           # emisión
     ruc: str
     proveedor: str
     tipo: str
@@ -25,6 +25,9 @@ class FilaOut(BaseModel):
     moneda: str
     total: float
     docnum_sap: int | None = None
+    fecha_registro: str | None = None    # contabilización (SAP)
+    total_sap: float | None = None
+    total_sunat: float | None = None
 
 
 class AsignadoOut(BaseModel):
