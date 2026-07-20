@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef, useState } from "react";
+import type { ReactNode } from "react";
 import { asignar, obtenerCruce } from "../api";
 import { EN_AMBOS, MESES, SOLO_SAP, SOLO_SUNAT, TIPO_CP, etiquetaPeriodo, textoAntiguedad } from "../types";
 import type { Estado, Fila, Usuario } from "../types";
@@ -17,6 +18,9 @@ const TEXTO_ESTADO: Record<Estado, string> = {
   2: "Solo SUNAT",
 };
 
+type CampoOrden = "estado" | "fecha" | "ruc" | "proveedor" | "tipo" | "comprobante" | "moneda" | "total" | "docnum_sap";
+type Orden = { campo: CampoOrden; dir: 1 | -1 };
+
 export default function Cruce({ yo }: { yo: Usuario }) {
   const qc = useQueryClient();
   const [desde, setDesde] = useState("202606");
@@ -29,7 +33,13 @@ export default function Cruce({ yo }: { yo: Usuario }) {
   const [busca, setBusca] = useState("");
   const [sel, setSel] = useState<Set<string>>(new Set());
   const [pagina, setPagina] = useState(0);
+  const [orden, setOrden] = useState<Orden | null>(null);
   const TAM = 100;
+
+  const alReordenar = (campo: CampoOrden) => {
+    setOrden((o) => (o?.campo === campo ? { campo, dir: o.dir === 1 ? -1 : 1 } : { campo, dir: 1 }));
+    setPagina(0);
+  };
 
   // `refrescar` solo se activa al pulsar "Actualizar datos": la carga normal usa la caché.
   const refrescar = useRef(false);
@@ -111,9 +121,23 @@ export default function Cruce({ yo }: { yo: Usuario }) {
     return c;
   }, [base]);
 
+  const ordenadas = useMemo(() => {
+    if (!orden) return filtradas;
+    const { campo, dir } = orden;
+    return [...filtradas].sort((a, b) => {
+      const va = a[campo];
+      const vb = b[campo];
+      if (va == null && vb == null) return 0;
+      if (va == null) return 1;    // sin dato siempre al final, sin importar la direccion
+      if (vb == null) return -1;
+      if (typeof va === "number" && typeof vb === "number") return (va - vb) * dir;
+      return String(va).localeCompare(String(vb), "es") * dir;
+    });
+  }, [filtradas, orden]);
+
   const paginas = Math.max(1, Math.ceil(filtradas.length / TAM));
   const pag = Math.min(pagina, paginas - 1);
-  const visibles = filtradas.slice(pag * TAM, pag * TAM + TAM);
+  const visibles = ordenadas.slice(pag * TAM, pag * TAM + TAM);
   const total = base.length;
   const pct = (n: number) => (total ? ((100 * n) / total).toFixed(1) + "% del total" : "");
 
@@ -279,10 +303,15 @@ export default function Cruce({ yo }: { yo: Usuario }) {
                       }
                     />
                   </th>
-                  <th>Estado</th><th>Fecha</th><th>RUC</th><th>Proveedor</th>
-                  <th>Tipo</th><th>Comprobante</th><th>Mon.</th>
-                  <th style={{ textAlign: "right" }}>Total</th>
-                  <th style={{ textAlign: "right" }}>Doc. SAP</th>
+                  <ThOrden campo="estado" orden={orden} alReordenar={alReordenar}>Estado</ThOrden>
+                  <ThOrden campo="fecha" orden={orden} alReordenar={alReordenar}>Fecha</ThOrden>
+                  <ThOrden campo="ruc" orden={orden} alReordenar={alReordenar}>RUC</ThOrden>
+                  <ThOrden campo="proveedor" orden={orden} alReordenar={alReordenar}>Proveedor</ThOrden>
+                  <ThOrden campo="tipo" orden={orden} alReordenar={alReordenar}>Tipo</ThOrden>
+                  <ThOrden campo="comprobante" orden={orden} alReordenar={alReordenar}>Comprobante</ThOrden>
+                  <ThOrden campo="moneda" orden={orden} alReordenar={alReordenar}>Mon.</ThOrden>
+                  <ThOrden campo="total" orden={orden} alReordenar={alReordenar} right>Total</ThOrden>
+                  <ThOrden campo="docnum_sap" orden={orden} alReordenar={alReordenar} right>Doc. SAP</ThOrden>
                 </tr>
               </thead>
               <tbody>
@@ -362,6 +391,29 @@ export default function Cruce({ yo }: { yo: Usuario }) {
         )}
       </div>
     </>
+  );
+}
+
+function ThOrden({
+  campo, orden, alReordenar, right, children,
+}: {
+  campo: CampoOrden;
+  orden: Orden | null;
+  alReordenar: (campo: CampoOrden) => void;
+  right?: boolean;
+  children: ReactNode;
+}) {
+  const activo = orden?.campo === campo;
+  return (
+    <th
+      className={`sortable ${activo ? "active" : ""}`}
+      style={right ? { textAlign: "right" } : undefined}
+      onClick={() => alReordenar(campo)}
+      aria-sort={activo ? (orden!.dir === 1 ? "ascending" : "descending") : undefined}
+    >
+      {children}
+      <span className="sort-arrow">{activo ? (orden!.dir === 1 ? " ▲" : " ▼") : ""}</span>
+    </th>
   );
 }
 
