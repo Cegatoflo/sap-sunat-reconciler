@@ -188,13 +188,24 @@ class SapSession:
         return {b["CardCode"]: b["FederalTaxID"] for b in bps if b.get("FederalTaxID")}
 
     def documentos_compra(self, fec_ini: str, fec_fin: str) -> list[dict]:
-        """Facturas (01) y notas de crédito (07) por fecha de emisión (TaxDate)."""
+        """Facturas (01) y notas de crédito (07) del periodo, por **fecha de contabilización**
+        (DocDate), NO por fecha de emisión (TaxDate).
+
+        Por qué DocDate y no TaxDate: SUNAT arma el Registro de Compras (RCE) por **periodo de
+        anotación**, no de emisión. Una factura emitida en marzo pero anotada en junio (algo
+        legal: hay hasta 12 meses para tomar el crédito fiscal) aparece en la propuesta RCE de
+        JUNIO. En SAP, esa "fecha de anotación" es la de contabilización = DocDate. Si filtramos
+        por TaxDate (emisión = marzo), no la encontramos en el cruce de junio y sale como un
+        falso "Solo SUNAT", aunque sí esté registrada.
+        Se sigue trayendo TaxDate para MOSTRARLA (la fecha de emisión es la que el usuario espera
+        ver, igual que la columna de emisión de SUNAT).
+        """
         out: list[dict] = []
         for entidad, tipo in DOCS_COMPRA:
             docs = self._todos(
                 f"{entidad}?$select=DocEntry,DocNum,CardCode,CardName,DocDate,TaxDate,"
                 f"DocTotal,DocCurrency,NumAtCard"
-                f"&$filter=TaxDate ge '{fec_ini}' and TaxDate le '{fec_fin}'&$orderby=TaxDate"
+                f"&$filter=DocDate ge '{fec_ini}' and DocDate le '{fec_fin}'&$orderby=DocDate"
             )
             for d in docs:
                 d["_tipo"] = tipo

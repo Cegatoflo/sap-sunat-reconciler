@@ -124,7 +124,9 @@ def cargar_sunat(csv_path: Path) -> dict[str, dict]:
 
 
 def cargar_sap(sap: SapSession, periodo: str, ruc_por_cardcode: dict[str, str]) -> dict[str, dict]:
-    """Facturas y NC de proveedores nacionales del periodo (por fecha de emisión)."""
+    """Facturas y NC de proveedores nacionales del periodo, agrupadas por **fecha de
+    contabilización** (así coincide con el periodo del RCE de SUNAT — ver documentos_compra).
+    La fecha que se muestra sigue siendo la de emisión (TaxDate)."""
     y, m = int(periodo[:4]), int(periodo[4:6])
     ini = f"{y:04d}-{m:02d}-01"
     fin = f"{y:04d}-{m:02d}-{calendar.monthrange(y, m)[1]:02d}"
