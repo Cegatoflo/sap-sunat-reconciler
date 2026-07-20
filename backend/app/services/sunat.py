@@ -138,6 +138,72 @@ def _borrar_ticket_pendiente(empresa_codigo: str, periodo: str) -> None:
     _ruta_ticket(empresa_codigo, periodo).unlink(missing_ok=True)
 
 
+# ---------------------------------------------------------------- refresco en segundo plano
+# SUNAT puede tardar varios minutos en generar la propuesta (medido: hasta ~5 min). Bloquear
+# el request HTTP todo ese tiempo hacía que el usuario viera un "error" por lentitud, aunque
+# en el fondo todo iba bien. En vez de eso: el refresco corre en un HILO aparte y el request
+# devuelve al instante la copia que haya en caché. El frontend consulta este estado y recarga
+# solo cuando termina.
+#
+# Como aquí NADIE está esperando colgado, el sondeo puede ser mucho más paciente que en el
+# camino síncrono (donde el tope corto evitaba que el navegador se quedara colgado).
+POLLS_BG = 180                  # 180 * 5s = 15 min de sondeo tranquilo en segundo plano
+COOLDOWN_ERROR_SEG = 5 * 60     # tras un fallo, no reintentar solo por TTL vencido por un rato
+
+# (empresa, periodo) -> {"estado": "actualizando"|"listo"|"error", "error": str|None, "ts": float}
+_refrescos: dict[tuple[str, str], dict] = {}
+_refrescos_lock = threading.Lock()
+
+
+def estado_refresco(cod: str, periodo: str) -> str | None:
+    """'actualizando' | 'listo' | 'error' | None (nunca se ha refrescado en esta ejecución)."""
+    with _refrescos_lock:
+        r = _refrescos.get((cod, periodo))
+        return r["estado"] if r else None
+
+
+def _marcar_refresco(cod: str, periodo: str, estado: str, error: str | None = None) -> None:
+    with _refrescos_lock:
+        _refrescos[(cod, periodo)] = {"estado": estado, "error": error, "ts": time.time()}
+
+
+def _refresco_en_curso(cod: str, periodo: str) -> bool:
+    with _refrescos_lock:
+        r = _refrescos.get((cod, periodo))
+        return bool(r and r["estado"] == "actualizando")
+
+
+def _error_reciente(cod: str, periodo: str) -> bool:
+    """True si el último refresco falló hace poco: evita reintentar en bucle por TTL vencido.
+    El botón 'Actualizar' (forzar) ignora este freno; el auto-refresco por TTL lo respeta."""
+    with _refrescos_lock:
+        r = _refrescos.get((cod, periodo))
+        return bool(r and r["estado"] == "error" and (time.time() - r["ts"]) < COOLDOWN_ERROR_SEG)
+
+
+def iniciar_refresco_bg(empresa: Empresa, periodo: str) -> None:
+    """Lanza (si no hay ya uno en curso para ese periodo) un hilo que descarga la propuesta
+    de SUNAT y actualiza el CSV en disco. El request que llama NO espera esto."""
+    cod = empresa.codigo
+    with _refrescos_lock:
+        r = _refrescos.get((cod, periodo))
+        if r and r["estado"] == "actualizando":
+            return                                   # ya hay uno corriendo, no duplicar
+        _refrescos[(cod, periodo)] = {"estado": "actualizando", "error": None, "ts": time.time()}
+
+    def _trabajo() -> None:
+        try:
+            with SunatClient(empresa) as cli:        # hilo propio -> su propio cliente httpx
+                cli._descargar(periodo, _ruta_propuesta(cod, periodo), max_polls=POLLS_BG)
+            _marcar_refresco(cod, periodo, "listo")
+            log.info("[%s] Refresco en segundo plano de %s: listo", cod, periodo)
+        except Exception as e:                        # noqa: BLE001
+            log.warning("[%s] Refresco en segundo plano de %s falló: %s", cod, periodo, e)
+            _marcar_refresco(cod, periodo, "error", str(e))
+
+    threading.Thread(target=_trabajo, name=f"refresco-{cod}-{periodo}", daemon=True).start()
+
+
 def edad_cache_horas(empresa_codigo: str, periodo: str) -> float | None:
     """Antigüedad de la copia local, o None si no existe."""
     p = _ruta_propuesta(empresa_codigo, periodo)
@@ -236,37 +302,41 @@ class SunatClient:
 
     # ---------- propuesta RCE ----------
     def propuesta_rce(self, periodo: str, forzar: bool = False) -> Path:
-        """Ruta del CSV de la propuesta (de ESTA empresa), refrescándolo de SUNAT solo si hace falta.
+        """Ruta del CSV de la propuesta (de ESTA empresa). NUNCA bloquea al usuario esperando
+        a SUNAT cuando ya hay algo que mostrar.
 
-        · Si la copia local está vigente (según ttl_horas) -> se usa tal cual.
-        · Si venció -> se descarga, serializando y espaciando las llamadas a SUNAT.
-        · Si SUNAT no responde (429 tras reintentos) pero hay copia local ->
-          se devuelve la copia vieja. Mejor un dato de ayer que una pantalla de error.
+        · Caché vigente (según ttl_horas) y sin forzar -> se usa tal cual.
+        · Hay copia (aunque vencida, o con forzar=True) -> se devuelve YA, y el refresco de
+          SUNAT se dispara en SEGUNDO PLANO (SUNAT puede tardar minutos). El frontend consulta
+          el estado y recarga cuando termina. Mejor un dato de ayer al instante que una pantalla
+          colgada varios minutos.
+        · No hay NINGUNA copia (primer uso de este periodo) -> ahí sí se descarga en el momento,
+          con el tope corto de siempre, porque no hay nada que mostrar mientras tanto.
         """
         cod = self._emp.codigo
         destino = _ruta_propuesta(cod, periodo)
         edad = edad_cache_horas(cod, periodo)
+        vigente = edad is not None and edad < ttl_horas(periodo)
 
-        if not forzar and edad is not None and edad < ttl_horas(periodo):
-            return destino                                    # caché vigente
+        if vigente and not forzar:
+            return destino                                    # caché vigente, nada que hacer
 
+        if destino.exists():
+            # Hay dato para mostrar: refrescar por detrás y devolver la copia actual al instante.
+            # El botón "Actualizar" (forzar) siempre dispara; el auto-refresco por TTL vencido
+            # respeta el cooldown tras un error para no reintentar en bucle.
+            if forzar or not _error_reciente(cod, periodo):
+                iniciar_refresco_bg(self._emp, periodo)
+            return destino
+
+        # Primer uso de este periodo: no hay copia, hay que traerla sí o sí (aquí el usuario
+        # espera, pero es un caso puntual y con el tope corto de siempre).
         with _lock_descarga:                                  # una descarga a la vez (global)
-            # Otro hilo pudo haberla refrescado mientras esperábamos el lock
-            edad = edad_cache_horas(cod, periodo)
-            if not forzar and edad is not None and edad < ttl_horas(periodo):
+            if edad_cache_horas(cod, periodo) is not None:    # ¿otro hilo la bajó mientras tanto?
                 return destino
-            try:
-                # el intervalo mínimo se respeta DENTRO de _descargar, justo antes de la
-                # llamada real al endpoint de exportación (ver _get con es_exportacion=True)
-                return self._descargar(periodo, destino)
-            except (SunatError, httpx.HTTPError) as e:
-                if destino.exists():
-                    log.warning("[%s] No pude refrescar %s (%s). Uso la copia en caché de hace %.1f h.",
-                                cod, periodo, e, edad or 0)
-                    return destino
-                raise
+            return self._descargar(periodo, destino)          # puede lanzar SunatError/HTTPError
 
-    def _descargar(self, periodo: str, destino: Path) -> Path:
+    def _descargar(self, periodo: str, destino: Path, max_polls: int = 30) -> Path:
         cod = self._emp.codigo
 
         # 1) pedir la exportación -> ticket (o reanudar uno pendiente: pedir dos veces para el
@@ -288,7 +358,7 @@ class SunatClient:
         #    queda guardado y la PRÓXIMA llamada lo retoma en vez de generar uno nuevo)
         archivo = None
         ultimo_estado = None
-        for _ in range(30):
+        for _ in range(max_polls):
             time.sleep(5)
             est = self._get(
                 f"{SIRE}/rvierce/gestionprocesosmasivos/web/masivo/consultaestadotickets"
@@ -320,6 +390,11 @@ class SunatClient:
             z = zipfile.ZipFile(io.BytesIO(raw))
         except zipfile.BadZipFile:
             z = zipfile.ZipFile(io.BytesIO(raw[4:]))   # a veces trae marca de "spanned archive"
-        destino.write_bytes(z.read(z.namelist()[0]))
+        # Escritura atómica: el refresco en segundo plano puede coincidir con un request que
+        # esté LEYENDO este mismo CSV. Se escribe a un temporal y se renombra (replace es atómico
+        # en el mismo disco), así ningún lector ve un archivo a medio escribir.
+        tmp = destino.with_name(destino.name + ".tmp")
+        tmp.write_bytes(z.read(z.namelist()[0]))
+        tmp.replace(destino)
         log.info("[%s] SUNAT: propuesta %s guardada en %s", self._emp.codigo, periodo, destino)
         return destino

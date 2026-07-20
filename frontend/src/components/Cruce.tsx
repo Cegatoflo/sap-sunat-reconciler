@@ -41,7 +41,33 @@ export default function Cruce({ yo }: { yo: Usuario }) {
       refrescar.current = false;
       return obtenerCruce(rango.desde, rango.hasta, forzar);
     },
+    // Mientras algún periodo se esté refrescando en segundo plano (SUNAT tarda), sondeamos
+    // cada 5s. Al terminar, la respuesta trae el dato fresco y `estados` vuelve a vacío,
+    // así que el polling se apaga solo.
+    refetchInterval: (query) => {
+      const estados = query.state.data?.estados ?? {};
+      return Object.values(estados).some((e) => e === "actualizando") ? 5000 : false;
+    },
   });
+
+  // periodos que SUNAT está regenerando ahora mismo (refresco en segundo plano)
+  const refrescando = useMemo(
+    () =>
+      Object.entries(q.data?.estados ?? {})
+        .filter(([, e]) => e === "actualizando")
+        .map(([p]) => p)
+        .sort(),
+    [q.data],
+  );
+  // periodos cuyo último refresco falló (SUNAT no respondió tras varios minutos)
+  const conError = useMemo(
+    () =>
+      Object.entries(q.data?.estados ?? {})
+        .filter(([, e]) => e === "error")
+        .map(([p]) => p)
+        .sort(),
+    [q.data],
+  );
 
   const mAsignar = useMutation({
     mutationFn: (items: unknown[]) => asignar(items),
@@ -177,23 +203,44 @@ export default function Cruce({ yo }: { yo: Usuario }) {
             Cargar rango
           </button>
 
-          {/* Trae datos frescos de SUNAT. La carga normal usa la caché para no chocar
-              con el rate limit; esto la salta a propósito. */}
+          {/* Dispara la descarga fresca de SUNAT EN SEGUNDO PLANO y devuelve al instante lo
+              que hay en caché; el refresco real puede tardar minutos y se sigue por `estados`.
+              Se deshabilita solo mientras ya haya un refresco en curso, para no duplicarlo. */}
           <button
             className="btn ghost"
-            disabled={q.isFetching}
-            title="Vuelve a descargar la propuesta desde SUNAT (puede tardar)"
+            disabled={q.isLoading || refrescando.length > 0}
+            title="Vuelve a descargar la propuesta desde SUNAT (corre en segundo plano)"
             onClick={() => {
               refrescar.current = true;
               qc.invalidateQueries({ queryKey: ["cruce", rango.desde, rango.hasta] });
             }}
           >
-            {q.isFetching && refrescar.current ? "Actualizando…" : "↻ Actualizar datos"}
+            {refrescando.length > 0 ? "Actualizando…" : "↻ Actualizar datos"}
           </button>
 
-          {antiguedad != null && (
+          {refrescando.length > 0 ? (
+            <span className="msg refreshing" title="SUNAT está regenerando la propuesta; puedes seguir trabajando">
+              <span className="spin-mini" />
+              Actualizando SUNAT ({refrescando.map((p) => MESES[Number(p.slice(4)) - 1]).join(", ")})…
+            </span>
+          ) : antiguedad != null && (
             <span className="msg" title="Antigüedad del dato descargado de SUNAT">
               Datos SUNAT: <strong>{textoAntiguedad(antiguedad)}</strong>
+            </span>
+          )}
+
+          {conError.length > 0 && refrescando.length === 0 && (
+            <span className="msg err-inline" title="SUNAT no respondió a tiempo; ves el último dato disponible">
+              No se pudo actualizar {conError.map((p) => MESES[Number(p.slice(4)) - 1]).join(", ")}.{" "}
+              <button
+                className="linklike"
+                onClick={() => {
+                  refrescar.current = true;
+                  qc.invalidateQueries({ queryKey: ["cruce", rango.desde, rango.hasta] });
+                }}
+              >
+                Reintentar
+              </button>
             </span>
           )}
 
@@ -354,7 +401,10 @@ export default function Cruce({ yo }: { yo: Usuario }) {
           </div>
         </div>
 
-        {q.isFetching && (
+        {/* El overlay que "congela" la tabla es SOLO para cargas reales (traer un rango).
+            Durante el refresco en segundo plano NO aparece: el usuario sigue viendo y usando
+            el dato en caché mientras SUNAT regenera la propuesta. */}
+        {q.isFetching && refrescando.length === 0 && (
           <div className="overlay">
             <div className="spin" />
             <div className="msg">Consultando SAP y SUNAT…</div>
