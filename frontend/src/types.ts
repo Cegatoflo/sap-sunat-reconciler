@@ -37,6 +37,9 @@ export interface Asignado {
   estado: string;
 }
 
+/** Estado del refresco de SUNAT de un periodo (corre en segundo plano). */
+export type EstadoRefresco = "actualizando" | "listo" | "error" | null;
+
 export interface Cruce {
   desde: string;
   hasta: string;
@@ -45,6 +48,8 @@ export interface Cruce {
   asignaciones: Record<string, Asignado[]>;
   /** Antigüedad del dato de SUNAT, en horas, por periodo. */
   cache_horas: Record<string, number | null>;
+  /** Estado del refresco en segundo plano, por periodo. */
+  estados: Record<string, EstadoRefresco>;
 }
 
 export interface ResultadoAsignar {

@@ -28,7 +28,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from .sap import SapSession, obtener_sap
-from .sunat import SunatClient, edad_cache_horas, limpiar
+from .sunat import SunatClient, edad_cache_horas, estado_refresco, limpiar
 
 if TYPE_CHECKING:
     from ..empresas import Empresa
@@ -188,21 +188,27 @@ def meses_rango(desde: str, hasta: str) -> list[str]:
     return out
 
 
-def cruzar_rango(empresa: Empresa, desde: str, hasta: str,
-                 forzar: bool = False) -> tuple[list[Fila], dict[str, float | None]]:
-    """Devuelve (filas, antigüedad de la caché por periodo en horas), para UNA empresa.
+def cruzar_rango(
+    empresa: Empresa, desde: str, hasta: str, forzar: bool = False,
+) -> tuple[list[Fila], dict[str, float | None], dict[str, str | None]]:
+    """Devuelve (filas, antigüedad de la caché por periodo en horas, estado de refresco por
+    periodo), para UNA empresa.
 
-    `forzar=True` refresca desde SUNAT aunque la caché esté vigente (botón "Actualizar").
+    `forzar=True` dispara el refresco desde SUNAT aunque la caché esté vigente (botón
+    "Actualizar"). El refresco corre en segundo plano: `estados[periodo]` dice si ese periodo
+    está 'actualizando' / 'listo' / 'error' / None, para que el frontend sondee y recargue.
     """
     filas: list[Fila] = []
     cache: dict[str, float | None] = {}
+    estados: dict[str, str | None] = {}
     sap = obtener_sap(empresa)                    # sesión de servicio reutilizada (no se cierra)
     with SunatClient(empresa) as sunat:
         ruc_cc = _proveedores_nacionales_cache(sap, empresa.codigo)
         for periodo in meses_rango(desde, hasta):
             filas.extend(cruzar_periodo(sap, sunat, periodo, ruc_cc, forzar=forzar))
             cache[periodo] = edad_cache_horas(empresa.codigo, periodo)
-    return filas, cache
+            estados[periodo] = estado_refresco(empresa.codigo, periodo)
+    return filas, cache, estados
 
 
 def periodo_valido(p: str) -> bool:

@@ -39,6 +39,7 @@ class CruceOut(BaseModel):
     mi_bandeja: list[str]                        # claves que YO tengo asignadas
     asignaciones: dict[str, list[AsignadoOut]] = {}   # solo manager: quién tiene qué
     cache_horas: dict[str, float | None] = {}    # antigüedad del dato de SUNAT, por periodo
+    estados: dict[str, str | None] = {}          # refresco por periodo: actualizando/listo/error/None
 
 
 @router.get("/cruce", response_model=CruceOut)
@@ -67,7 +68,7 @@ def cruce(
         )
 
     try:
-        filas, cache = cruzar_rango(empresa, desde, hasta, forzar=refrescar)
+        filas, cache, estados = cruzar_rango(empresa, desde, hasta, forzar=refrescar)
     except Exception as e:  # noqa: BLE001
         raise HTTPException(status.HTTP_502_BAD_GATEWAY, f"Error consultando SAP/SUNAT: {e}") from e
 
@@ -98,4 +99,5 @@ def cruce(
         mi_bandeja=mias,
         asignaciones=asignaciones,
         cache_horas=cache,
+        estados=estados,
     )

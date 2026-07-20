@@ -212,6 +212,19 @@ td.chk { width: 34px; text-align: center; }
   border-radius: 50%; animation: sp .8s linear infinite;
 }
 @keyframes sp { to { transform: rotate(360deg); } }
-@media (prefers-reduced-motion: reduce) { .spin { animation: none; } }
+@media (prefers-reduced-motion: reduce) { .spin, .spin-mini { animation: none; } }
+
+/* refresco de SUNAT en segundo plano: aviso NO bloqueante en la barra */
+.msg.refreshing { color: var(--accent); font-weight: 600; display: inline-flex; align-items: center; gap: 6px; }
+.spin-mini {
+  display: inline-block; width: 12px; height: 12px; vertical-align: -1px;
+  border: 2px solid var(--accent-soft); border-top-color: var(--accent);
+  border-radius: 50%; animation: sp .8s linear infinite;
+}
+.msg.err-inline { color: var(--danger); }
+.linklike {
+  background: none; border: none; padding: 0; font: inherit; cursor: pointer;
+  color: var(--accent); font-weight: 600; text-decoration: underline;
+}
 
 @media (max-width: 760px) { .kpis { grid-template-columns: repeat(2, 1fr); } }
